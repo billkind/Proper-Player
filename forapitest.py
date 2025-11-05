@@ -4,25 +4,37 @@ from fastapi.responses import JSONResponse
 import whisper
 import tempfile
 import shutil
-import re
 import os
 import subprocess
 import json
 import nltk
 from nltk.stem import WordNetLemmatizer
-from nltk.corpus import wordnet
+
+# === Configuration ===
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
 # === Téléchargement des ressources NLTK ===
-nltk.download('punkt')
-nltk.download('wordnet')
-nltk.download('omw-1.4')
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt', quiet=True)
+    
+try:
+    nltk.data.find('corpora/wordnet')
+except LookupError:
+    nltk.download('wordnet', quiet=True)
+    
+try:
+    nltk.data.find('corpora/omw-1.4')
+except LookupError:
+    nltk.download('omw-1.4', quiet=True)
 
 # === Initialisation ===
-app = FastAPI()
+app = FastAPI(title="Proper Player API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,18 +43,20 @@ app.add_middleware(
 lemmatizer = WordNetLemmatizer()
 
 # === Chargement du modèle Whisper ===
+print("Loading Whisper model...")
 whisper_model = whisper.load_model("base")
+print("Whisper model loaded successfully!")
 
 # === Dictionnaire de gros mots étendu ===
 offensive_lexicon = set([
-    "fuck", "fucking", "fucker","fucked","shit","shitty", "asshole","bitch",
-    "bastard","dick","dumb","dumb bitch","idiot", "retard", "slut","cunt","whore",
+    "fuck", "fucking", "fucker", "fucked", "shit", "shitty", "asshole", "bitch",
+    "bastard", "dick", "dumb", "dumb bitch", "idiot", "retard", "slut", "cunt", "whore",
     "motherfucker", "pussy", "crap", "bollocks", "damn", "cock", "nigger",
     "nigga", "spic", "kike", "fag", "faggot", "twat", "wanker", "douche",
     "prick", "arse", "arsehole", "bloody", "bugger", "bullshit", "jackass",
-    "moron", "nuts", "piss", "screw", "screwed","suck","sucks","sex","shitball",
-    "shitballs","ass","butthog","douchebag","titty","titties","ass-lick","ass-licker","puzzie","atto",
-    "ass lick","ass licker","retarded","shithead","penis","penises"
+    "moron", "nuts", "piss", "screw", "screwed", "suck", "sucks", "sex", "shitball",
+    "shitballs", "ass", "butthog", "douchebag", "titty", "titties", "ass-lick", "ass-licker", 
+    "puzzie", "atto", "ass lick", "ass licker", "retarded", "shithead", "penis", "penises"
 ])
 
 # === Fonction de normalisation ===
@@ -57,28 +71,39 @@ def convert_to_wav(input_file, output_file="audio.wav"):
         "ffmpeg", "-y", "-i", input_file,
         "-ac", "1", "-ar", "16000", output_file
     ]
-    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
+# === Health check endpoint ===
+@app.get("/")
+async def root():
+    return {"status": "online", "message": "Proper Player API is running"}
 
-
-
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
 
 # === Point d'API ===
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[-1]) as tmp:
-        shutil.copyfileobj(file.file, tmp)
-        tmp_path = tmp.name
-
-    # Conversion audio
-    wav_path = tmp_path if tmp_path.endswith(".wav") else tmp_path + ".wav"
-    if not tmp_path.endswith(".wav"):
-        convert_to_wav(tmp_path, wav_path)
-
+    tmp_path = None
+    wav_path = None
+    
     try:
+        # Sauvegarde temporaire du fichier
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[-1]) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = tmp.name
+        
+        # Conversion audio
+        wav_path = tmp_path if tmp_path.endswith(".wav") else tmp_path + ".wav"
+        if not tmp_path.endswith(".wav"):
+            convert_to_wav(tmp_path, wav_path)
+        
+        # Transcription avec Whisper
+        print(f"Transcribing {file.filename}...")
         result = whisper_model.transcribe(wav_path, word_timestamps=True)
+        
         toxic_words = []
-
         for segment in result.get("segments", []):
             for word_data in segment.get("words", []):
                 word = word_data["word"].strip()
@@ -92,20 +117,40 @@ async def analyze(file: UploadFile = File(...)):
                         "start": start,
                         "end": end
                     })
-
-        # Sauvegarde
-        with open("toxic_words_output.json", "w", encoding="utf-8") as f:
-            json.dump(toxic_words, f, indent=2)
-
+        
+        print(f"Found {len(toxic_words)} offensive words")
+        
         return JSONResponse(content={
             "total": len(toxic_words),
-            "toxic_words": toxic_words
+            "toxic_words": toxic_words,
+            "status": "success"
         })
     
-
     except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        print(f"Error processing file: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={
+                "error": str(e),
+                "status": "error"
+            }
+        )
+    
     finally:
-        os.unlink(tmp_path)
-        if wav_path != tmp_path and os.path.exists(wav_path):
-            os.unlink(wav_path)
+        # Nettoyage des fichiers temporaires
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
+        if wav_path and wav_path != tmp_path and os.path.exists(wav_path):
+            try:
+                os.unlink(wav_path)
+            except:
+                pass
+
+# Point d'entrée pour uvicorn
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
