@@ -2,38 +2,65 @@ import React, { useState } from 'react';
 import './App.css';
 import VideoPreview from './VideoPreview';
 
+// Configuration de l'API - Changez cette URL après le déploiement
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
 function App() {
   const [file, setFile] = useState(null);
   const [logs, setLogs] = useState('');
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState(null);
   const [mode, setMode] = useState("mute");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleFileChange = (e) => {
     setFile(e.target.files[0]);
     setResult(null);
     setLogs('');
     setProgress(0);
+    setError(null);
   };
 
   const handleUpload = async () => {
     if (!file) return;
+    
+    setIsAnalyzing(true);
+    setError(null);
     const formData = new FormData();
     formData.append('file', file);
     setLogs('⏳ Upload in progress...');
     setProgress(10);
 
     try {
-      const response = await fetch('http://localhost:8000/analyze', {
+      setProgress(30);
+      setLogs('🔊 Analyzing audio...');
+      
+      const response = await fetch(`${API_URL}/analyze`, {
         method: 'POST',
         body: formData,
       });
+      
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+      
       const data = await response.json();
+      
+      if (data.status === 'error') {
+        throw new Error(data.error);
+      }
+      
       setResult(data);
-      setLogs(JSON.stringify(data, null, 2));
+      setLogs('✅ Analysis complete!');
       setProgress(100);
     } catch (err) {
-      setLogs('❌ Erreur : ' + err.message);
+      console.error('Error:', err);
+      setError(err.message);
+      setLogs('❌ Error: ' + err.message);
+      setProgress(0);
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -42,8 +69,7 @@ function App() {
       {/* Header */}
       <header className="header">
         <div className="header-content">
-          
-          <img src="public/Headphones with Prohibition Icon.png" alt="" class="img1" width={50}/>
+          <img src="/Headphones with Prohibition Icon.png" alt="" className="img1" width={50}/>
           <span className="app-title">PROPER PLAYER</span>
         </div>
       </header>
@@ -69,6 +95,7 @@ function App() {
               onChange={handleFileChange}
               className="file-input"
               id="file-input"
+              disabled={isAnalyzing}
             />
             <label htmlFor="file-input" className="file-label">
               <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
@@ -97,6 +124,7 @@ function App() {
                   checked={mode === "mute"}
                   onChange={() => setMode("mute")}
                   id="mute"
+                  disabled={isAnalyzing}
                 />
                 <label htmlFor="mute">
                   <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
@@ -113,6 +141,7 @@ function App() {
                   checked={mode === "bip"}
                   onChange={() => setMode("bip")}
                   id="bip"
+                  disabled={isAnalyzing}
                 />
                 <label htmlFor="bip">
                   <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
@@ -124,14 +153,32 @@ function App() {
             </div>
           </div>
 
-          <button onClick={handleUpload} className="analyze-button" disabled={!file}>
+          <button 
+            onClick={handleUpload} 
+            className="analyze-button" 
+            disabled={!file || isAnalyzing}
+          >
             <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/>
             </svg>
-            Analyze & Censor
+            {isAnalyzing ? 'Analyzing...' : 'Analyze & Censor'}
           </button>
 
-          {progress > 0 && (
+          {error && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.75rem',
+              background: 'rgba(239, 68, 68, 0.2)',
+              border: '1px solid rgba(239, 68, 68, 0.5)',
+              borderRadius: '0.5rem',
+              color: '#ef4444',
+              fontSize: '0.875rem'
+            }}>
+              {error}
+            </div>
+          )}
+
+          {progress > 0 && !error && (
             <div className="progress-container">
               <div className="progress-info">
                 <span>Processing...</span>
