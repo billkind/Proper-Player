@@ -76,11 +76,18 @@ def convert_to_wav(input_file, output_file="audio.wav"):
 # === Health check endpoint ===
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Proper Player API is running"}
+    return {
+        "status": "online", 
+        "message": "Proper Player API is running",
+        "version": "1.0.0"
+    }
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "service": "proper-player-api"
+    }
 
 # === Point d'API ===
 @app.post("/analyze")
