@@ -1,2 +1,2 @@
-web: python -m uvicorn forapitest:app --host 0.0.0.0 --port ${PORT:-8000}
+web: uvicorn forapitest:app --host 0.0.0.0 --port ${PORT:-8000}
 
