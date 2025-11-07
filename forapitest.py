@@ -1,7 +1,7 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import whisper
+from faster_whisper import WhisperModel
 import tempfile
 import shutil
 import os
@@ -42,10 +42,11 @@ app.add_middleware(
 
 lemmatizer = WordNetLemmatizer()
 
-# === Chargement du modèle Whisper ===
-print("Loading Whisper model...")
-whisper_model = whisper.load_model("base")
-print("Whisper model loaded successfully!")
+# === Chargement du modèle Whisper (faster-whisper - beaucoup plus léger) ===
+print("Loading Faster-Whisper model...")
+# Utiliser "tiny" avec CPU pour une empreinte minimale
+whisper_model = WhisperModel("tiny", device="cpu", compute_type="int8")
+print("Faster-Whisper model loaded successfully!")
 
 # === Dictionnaire de gros mots étendu ===
 offensive_lexicon = set([
@@ -106,16 +107,16 @@ async def analyze(file: UploadFile = File(...)):
         if not tmp_path.endswith(".wav"):
             convert_to_wav(tmp_path, wav_path)
         
-        # Transcription avec Whisper
+        # Transcription avec Faster-Whisper
         print(f"Transcribing {file.filename}...")
-        result = whisper_model.transcribe(wav_path, word_timestamps=True)
+        segments, info = whisper_model.transcribe(wav_path, word_timestamps=True)
         
         toxic_words = []
-        for segment in result.get("segments", []):
-            for word_data in segment.get("words", []):
-                word = word_data["word"].strip()
-                start = round(word_data["start"], 2)
-                end = round(word_data["end"], 2)
+        for segment in segments:
+            for word_data in segment.words:
+                word = word_data.word.strip()
+                start = round(word_data.start, 2)
+                end = round(word_data.end, 2)
                 
                 norm_word = normalize(word)
                 if norm_word in offensive_lexicon:
