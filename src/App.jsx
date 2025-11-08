@@ -4,7 +4,8 @@ import VideoPreview from './VideoPreview';
 
 // Configuration de l'API - Changez cette URL après le déploiement
 //const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-const API_URL = import.meta.env.VITE_API_URL || 'https://proper-player.onrender.com';
+// Au début du fichier, après les imports
+const API_URL = 'https://proper-player.onrender.com'; // Votre URL Render
 
 function App() {
   const [file, setFile] = useState(null);
