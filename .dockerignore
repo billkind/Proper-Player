@@ -1,0 +1,95 @@
+# Python
+
+**pycache**/
+_.py[cod]
+_$py.class
+_.so
+.Python
+_.egg
+_.egg-info/
+dist/
+build/
+_.pyc
+_.pyo
+_.pyd
+
+# Virtual environments
+
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+
+.vscode/
+.idea/
+_.swp
+_.swo
+\*~
+.DS_Store
+
+# Git
+
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+
+\*.md
+README.md
+LICENSE
+docs/
+
+# Tests
+
+tests/
+test\__.py
+_\_test.py
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Media files (ne pas inclure dans l'image)
+
+_.wav
+_.mp3
+_.mp4
+_.avi
+_.mov
+_.flv
+_.wmv
+_.m4a
+_.aac
+_.ogg
+
+# Logs et outputs
+
+_.log
+toxic_words_output.json
+_.json
+
+# Temporary files
+
+_.tmp
+_.temp
+\*.cache
+.cache/
+
+# Railway specific (si vous migrez)
+
+railway.json
+nixpacks.toml
+Aptfile
+
+# Environment variables
+
+.env
+.env.local
+.env.\*
+
+# OS files
+
+Thumbs.db
+.DS_Store
