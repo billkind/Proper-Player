@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: proper-player-api
+    name: Proper-Player
     runtime: python
     plan: free
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
@@ -11,3 +11,4 @@ services:
       - key: ALLOWED_ORIGINS
         value: "*"
     healthCheckPath: /health
+
