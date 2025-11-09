@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: Proper-Player
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn forapitest:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.6
+      - key: ALLOWED_ORIGINS
+        value: "*"
+    healthCheckPath: /health
+
