@@ -150,7 +150,7 @@ function App() {
               display: 'block',
               marginTop: '0.5rem'
             }}>
-              Processing time: ~30-60 seconds per minute of audio
+              
             </span>
           </p>
         </div>
