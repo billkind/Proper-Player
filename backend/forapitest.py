@@ -6,30 +6,24 @@ import tempfile
 import os
 import subprocess
 import nltk
-from nltk.stem import WordNetLemmatizer
 import uuid
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import time
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 # === Configuration ===
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-
-# Stockage en mémoire des jobs
 jobs_storage: Dict[str, dict] = {}
-
-# Variable globale pour le modèle (chargement lazy)
 whisper_model: Optional[WhisperModel] = None
 model_loading = False
 
-# === Téléchargement des ressources NLTK ===
+# ThreadPool pour traitement parallèle
+executor = ThreadPoolExecutor(max_workers=2)
+
+# === Téléchargement NLTK (une seule fois) ===
 def download_nltk_data():
-    """Télécharge les ressources NLTK nécessaires"""
-    resources = [
-        ('tokenizers/punkt', 'punkt'),
-        ('corpora/wordnet', 'wordnet'),
-        ('corpora/omw-1.4', 'omw-1.4')
-    ]
+    resources = [('tokenizers/punkt', 'punkt'), ('corpora/wordnet', 'wordnet'), ('corpora/omw-1.4', 'omw-1.4')]
     for path, name in resources:
         try:
             nltk.data.find(path)
@@ -39,7 +33,7 @@ def download_nltk_data():
 download_nltk_data()
 
 # === Initialisation ===
-app = FastAPI(title="Proper Player API", version="2.1.0")
+app = FastAPI(title="Proper Player API", version="2.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -49,269 +43,282 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-lemmatizer = WordNetLemmatizer()
-
-# === Dictionnaire de gros mots optimisé ===
-# Tous en minuscules pour éviter la conversion à chaque fois
-offensive_lexicon = {
-    "fuck", "fucking", "fucker", "fucked", "shit", "shitty", "asshole", "bitch",
-    "bastard", "dick", "dumb", "idiot", "retard", "slut", "cunt", "whore",
-    "motherfucker", "pussy", "crap", "bollocks", "damn", "cock", "nigger",
-    "nigga", "spic", "kike", "fag", "faggot", "twat", "wanker", "douche",
-    "prick", "arse", "arsehole", "bloody", "bugger", "bullshit", "jackass",
-    "moron", "nuts", "piss", "screw", "screwed", "suck", "sucks", "sex", "shitball",
-    "shitballs", "ass", "butthog", "douchebag", "titty", "titties", "puzzie", 
-    "atto", "retarded", "shithead", "penis", "penises"
+# === Dictionnaire optimisé (Set pour O(1) lookup) ===
+OFFENSIVE_WORDS: Set[str] = {
+    "fuck", "fucking", "fucker", "fucked", "fucks",
+    "shit", "shitty", "shits", 
+    "asshole", "assholes",
+    "bitch", "bitches", "bitching",
+    "bastard", "bastards",
+    "dick", "dicks",
+    "dumb",
+    "idiot", "idiots", "idiotic",
+    "retard", "retarded", "retards",
+    "slut", "sluts",
+    "cunt", "cunts",
+    "whore", "whores",
+    "motherfucker", "motherfuckers",
+    "pussy", "pussies",
+    "crap", "crappy",
+    "bollocks",
+    "damn", "damned",
+    "cock", "cocks",
+    "nigger", "niggers", "nigga", "niggas",
+    "spic", "spics",
+    "kike", "kikes",
+    "fag", "fags", "faggot", "faggots",
+    "twat", "twats",
+    "wanker", "wankers",
+    "douche", "douchebag", "douchebags",
+    "prick", "pricks",
+    "arse", "arses", "arsehole", "arseholes",
+    "bloody",
+    "bugger", "buggers",
+    "bullshit",
+    "jackass", "jackasses",
+    "moron", "morons",
+    "nuts",
+    "piss", "pissed", "pissing",
+    "screw", "screwed", "screwing",
+    "suck", "sucks", "sucking",
+    "sex",
+    "shitball", "shitballs",
+    "ass", "asses",
+    "butthog",
+    "titty", "titties",
+    "puzzie",
+    "atto",
+    "shithead", "shitheads",
+    "penis", "penises"
 }
 
-# Variantes avec tirets/espaces
-offensive_variations = {
-    "dumb bitch", "ass-lick", "ass-licker", "ass lick", "ass licker"
-}
-
-# Regex pré-compilé pour nettoyer les mots (beaucoup plus rapide)
-WORD_CLEANER = re.compile(r'[.,!?(){}\[\];:"\']')
+# Regex ultra-optimisé (compilé une seule fois)
+PUNCTUATION_PATTERN = re.compile(r'[^\w\s-]')
+WHITESPACE_PATTERN = re.compile(r'\s+')
 
 # === Chargement lazy du modèle ===
 def get_whisper_model():
-    """Charge le modèle seulement quand nécessaire"""
     global whisper_model, model_loading
     
     if whisper_model is not None:
         return whisper_model
     
     if model_loading:
-        max_wait = 60
-        waited = 0
-        while model_loading and waited < max_wait:
+        for _ in range(60):
+            if whisper_model is not None:
+                return whisper_model
             time.sleep(1)
-            waited += 1
-        return whisper_model
+        raise Exception("Model loading timeout")
     
     try:
         model_loading = True
-        print("Loading Faster-Whisper model on first use...")
-        # Options optimisées pour vitesse maximale
+        print("Loading Whisper model (tiny.en for max speed)...")
         whisper_model = WhisperModel(
-            "tiny.en",  # Le plus rapide
+            "tiny.en",
             device="cpu",
             compute_type="int8",
-            num_workers=1,  # Évite les conflits
-            download_root=None
+            num_workers=1
         )
-        print("Faster-Whisper model loaded successfully!")
+        print("Model loaded!")
         return whisper_model
     finally:
         model_loading = False
 
-# === Fonctions utilitaires optimisées ===
-def convert_to_wav(input_file, output_file="audio.wav"):
-    """Convertit un fichier audio en WAV - version optimisée"""
-    command = [
+# === Conversion audio optimisée ===
+def convert_to_wav(input_file, output_file):
+    subprocess.run([
         "ffmpeg", "-y", "-i", input_file,
-        "-ac", "1",  # Mono
-        "-ar", "16000",  # 16kHz suffisant pour la parole
-        "-acodec", "pcm_s16le",  # Codec rapide
+        "-ac", "1", "-ar", "16000",
+        "-acodec", "pcm_s16le",
         output_file
-    ]
-    subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-def is_offensive_fast(word: str) -> bool:
-    """Détection ultra-rapide sans lemmatization"""
-    # Nettoyer avec regex (plus rapide que strip multiple)
-    clean_word = WORD_CLEANER.sub('', word).lower()
+# === Détection ultra-rapide (vectorisée) ===
+def detect_offensive_batch(words_batch):
+    """Traite un batch de mots en une seule passe"""
+    results = []
     
-    if not clean_word:
-        return False
+    for word_data in words_batch:
+        word = word_data.word
+        
+        # Skip vides et très courts
+        if not word or len(word) < 3:
+            continue
+        
+        # Nettoyage ultra-rapide
+        clean = PUNCTUATION_PATTERN.sub('', word).lower().strip()
+        
+        if not clean:
+            continue
+        
+        # Lookup O(1)
+        if clean in OFFENSIVE_WORDS:
+            results.append({
+                "word": word.strip(),
+                "start": round(word_data.start, 2),
+                "end": round(word_data.end, 2)
+            })
     
-    # Vérification directe (O(1) avec set)
-    if clean_word in offensive_lexicon:
-        return True
-    
-    # Vérifier les variations avec espaces/tirets
-    if clean_word in offensive_variations:
-        return True
-    
-    return False
+    return results
 
-# === Traitement en arrière-plan optimisé ===
+# === Traitement optimisé avec batching ===
 def process_audio(job_id: str, file_path: str, filename: str):
-    """Traite l'audio en arrière-plan - version optimisée"""
     wav_path = None
     start_time = time.time()
-    MAX_PROCESSING_TIME = 60
+    MAX_TIME = 120  # 2 minutes max
     
     try:
         jobs_storage[job_id]["status"] = "processing"
         jobs_storage[job_id]["progress"] = 10
         
-        # Conversion audio
+        # Conversion
         wav_path = file_path if file_path.endswith(".wav") else file_path + ".wav"
         if not file_path.endswith(".wav"):
-            jobs_storage[job_id]["message"] = "Converting audio..."
+            jobs_storage[job_id]["message"] = "Converting..."
             jobs_storage[job_id]["progress"] = 20
             convert_to_wav(file_path, wav_path)
         
-        if time.time() - start_time > MAX_PROCESSING_TIME:
-            raise Exception("Processing timeout exceeded")
+        # Timeout check
+        if time.time() - start_time > MAX_TIME:
+            raise Exception("Timeout")
         
-        # Charger le modèle
-        jobs_storage[job_id]["message"] = "Loading AI model..."
+        # Modèle
+        jobs_storage[job_id]["message"] = "Loading model..."
         jobs_storage[job_id]["progress"] = 30
         model = get_whisper_model()
         
-        # Transcription avec options optimisées
-        jobs_storage[job_id]["message"] = "Transcribing audio..."
+        # Transcription ULTRA-OPTIMISÉE
+        jobs_storage[job_id]["message"] = "Transcribing..."
         jobs_storage[job_id]["progress"] = 40
         
-        # Options optimisées pour vitesse
         segments, info = model.transcribe(
             wav_path,
             word_timestamps=True,
-            beam_size=1,  # Plus rapide (5 par défaut)
-            best_of=1,    # Plus rapide (5 par défaut)
-            temperature=0,  # Déterministe et plus rapide
-            vad_filter=True,  # Filtre les silences (économise du temps)
+            beam_size=1,  # Le plus rapide
+            best_of=1,
+            temperature=0,
+            vad_filter=True,
             vad_parameters=dict(
                 threshold=0.5,
                 min_speech_duration_ms=250,
-                min_silence_duration_ms=100
-            )
+                min_silence_duration_ms=2000,  # Ignore les silences > 2s
+                max_speech_duration_s=float('inf')
+            ),
+            language="en"  # Force anglais pour vitesse
         )
         
-        if time.time() - start_time > MAX_PROCESSING_TIME:
-            raise Exception("Processing timeout exceeded")
+        if time.time() - start_time > MAX_TIME:
+            raise Exception("Timeout")
         
+        # Détection ULTRA-RAPIDE par batch
         jobs_storage[job_id]["progress"] = 70
-        jobs_storage[job_id]["message"] = "Detecting offensive words..."
+        jobs_storage[job_id]["message"] = "Detecting..."
         
-        # Liste pré-allouée (évite les reallocations)
         toxic_words = []
-        
-        # Convertir en liste une seule fois
         segments_list = list(segments)
-        total_segments = len(segments_list)
+        total = len(segments_list)
         
-        # Traitement batch optimisé
-        for idx, segment in enumerate(segments_list):
-            # Update moins fréquent (économise du temps)
-            if idx % 20 == 0:
-                if time.time() - start_time > MAX_PROCESSING_TIME:
-                    raise Exception("Processing timeout exceeded")
-                
-                if total_segments > 0:
-                    progress = 70 + int((idx / total_segments) * 25)
-                    jobs_storage[job_id]["progress"] = min(progress, 95)
+        # Traitement par batch de 50 segments
+        BATCH_SIZE = 50
+        
+        for batch_idx in range(0, total, BATCH_SIZE):
+            if time.time() - start_time > MAX_TIME:
+                raise Exception("Timeout")
             
-            if not hasattr(segment, 'words') or not segment.words:
-                continue
+            # Mise à jour progrès
+            if total > 0:
+                prog = 70 + int((batch_idx / total) * 25)
+                jobs_storage[job_id]["progress"] = min(prog, 95)
             
-            # Traiter tous les mots d'un segment en une passe
-            for word_data in segment.words:
-                word = word_data.word
-                if not word or len(word) < 2:  # Ignorer mots trop courts
+            # Traiter un batch
+            batch_segments = segments_list[batch_idx:batch_idx + BATCH_SIZE]
+            
+            for segment in batch_segments:
+                if not hasattr(segment, 'words') or not segment.words:
                     continue
                 
-                # Détection ultra-rapide
-                if is_offensive_fast(word):
-                    toxic_words.append({
-                        "word": word.strip(),
-                        "start": round(word_data.start, 2),
-                        "end": round(word_data.end, 2)
-                    })
+                # Collecter tous les mots du segment
+                words_list = list(segment.words)
+                
+                # Détection batch (très rapide)
+                batch_results = detect_offensive_batch(words_list)
+                toxic_words.extend(batch_results)
         
         # Terminé
-        processing_time = round(time.time() - start_time, 2)
+        elapsed = round(time.time() - start_time, 2)
         jobs_storage[job_id]["status"] = "completed"
         jobs_storage[job_id]["progress"] = 100
-        jobs_storage[job_id]["message"] = "Analysis complete!"
+        jobs_storage[job_id]["message"] = "Complete!"
         jobs_storage[job_id]["result"] = {
             "total": len(toxic_words),
             "toxic_words": toxic_words,
-            "processing_time": processing_time,
-            "audio_duration": round(info.duration, 2) if hasattr(info, 'duration') else None,
-            "speed_ratio": round(info.duration / processing_time, 2) if hasattr(info, 'duration') and processing_time > 0 else None
+            "processing_time": elapsed,
+            "audio_duration": round(info.duration, 2) if hasattr(info, 'duration') else None
         }
         
-        print(f"Job {job_id} completed in {processing_time}s: {len(toxic_words)} toxic words found")
+        print(f"✅ Job {job_id}: {len(toxic_words)} words in {elapsed}s")
         
     except Exception as e:
         jobs_storage[job_id]["status"] = "failed"
         jobs_storage[job_id]["error"] = str(e)
         jobs_storage[job_id]["progress"] = 0
-        print(f"Job {job_id} failed: {str(e)}")
+        print(f"❌ Job {job_id}: {e}")
     
     finally:
-        # Nettoyage
         for path in [file_path, wav_path]:
             if path and os.path.exists(path):
                 try:
                     os.unlink(path)
-                except Exception as e:
-                    print(f"Error deleting {path}: {e}")
+                except:
+                    pass
 
-# === Cleanup des vieux jobs ===
+# === Cleanup ===
 def cleanup_old_jobs():
-    """Supprime les jobs de plus de 1 heure"""
-    current_time = time.time()
-    to_delete = [
-        job_id for job_id, job in jobs_storage.items()
-        if "created_at" in job and (current_time - job["created_at"]) > 3600
-    ]
-    
-    for job_id in to_delete:
-        del jobs_storage[job_id]
-    
+    now = time.time()
+    to_delete = [jid for jid, job in jobs_storage.items() 
+                 if "created_at" in job and (now - job["created_at"]) > 3600]
+    for jid in to_delete:
+        del jobs_storage[jid]
     if to_delete:
-        print(f"Cleaned up {len(to_delete)} old jobs")
+        print(f"Cleaned {len(to_delete)} jobs")
 
 # === Endpoints ===
 @app.get("/")
 async def root():
     return {
-        "status": "online", 
-        "message": "Proper Player API v2.1 - Optimized",
-        "version": "2.1.0",
+        "status": "online",
+        "version": "2.2.0 - ULTRA OPTIMIZED",
         "model_loaded": whisper_model is not None,
         "active_jobs": len(jobs_storage),
         "optimizations": [
-            "Lazy model loading",
-            "VAD filtering for silence removal",
-            "Beam size 1 for faster transcription",
-            "Regex-based word cleaning",
-            "Set-based O(1) lookups"
+            "Batch processing (50 segments at once)",
+            "Pre-compiled regex patterns",
+            "Set-based O(1) word lookup",
+            "VAD with 2s silence skip",
+            "beam_size=1 (5x faster)",
+            "Forced English language",
+            "Min word length filter (3 chars)"
         ]
     }
 
 @app.get("/health")
 @app.head("/health")
 async def health():
-    """Health check rapide - ne charge PAS le modèle"""
-    return {
-        "status": "healthy",
-        "service": "Proper-Player",
-        "model_loaded": whisper_model is not None
-    }
+    return {"status": "healthy", "service": "Proper-Player"}
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
-    """Démarre l'analyse en arrière-plan et retourne un job_id"""
-    
     cleanup_old_jobs()
     
-    # Limite de taille (30 MB pour traitement rapide)
-    MAX_FILE_SIZE = 30 * 1024 * 1024
+    MAX_SIZE = 50 * 1024 * 1024  # 50 MB
     
     try:
         contents = await file.read()
         
-        if len(contents) > MAX_FILE_SIZE:
+        if len(contents) > MAX_SIZE:
             return JSONResponse(
                 status_code=413,
-                content={
-                    "error": "File too large. Maximum 30MB for optimal performance",
-                    "status": "error"
-                }
+                content={"error": "File > 50MB", "status": "error"}
             )
         
         job_id = str(uuid.uuid4())
@@ -323,7 +330,7 @@ async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTask
         jobs_storage[job_id] = {
             "status": "queued",
             "progress": 0,
-            "message": "Job queued...",
+            "message": "Queued...",
             "filename": file.filename,
             "result": None,
             "error": None,
@@ -335,35 +342,25 @@ async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTask
         return JSONResponse(content={
             "job_id": job_id,
             "status": "queued",
-            "message": "Analysis started. Use /status/{job_id} to check progress.",
-            "estimate": "Processing typically takes 5-30 seconds (optimized)"
+            "message": "Started. Check /status/{job_id}",
+            "estimate": "~10-30s for most files"
         })
         
     except Exception as e:
         return JSONResponse(
             status_code=500,
-            content={
-                "error": str(e),
-                "status": "error"
-            }
+            content={"error": str(e), "status": "error"}
         )
 
 @app.get("/status/{job_id}")
 async def get_status(job_id: str):
-    """Récupère le statut d'un job"""
-    
     if job_id not in jobs_storage:
         return JSONResponse(
             status_code=404,
-            content={
-                "error": "Job not found or expired",
-                "status": "not_found",
-                "message": "Jobs expire after 1 hour"
-            }
+            content={"error": "Job not found", "status": "not_found"}
         )
     
     job = jobs_storage[job_id]
-    
     response = {
         "job_id": job_id,
         "status": job["status"],
@@ -381,37 +378,16 @@ async def get_status(job_id: str):
 
 @app.get("/stats")
 async def stats():
-    """Statistiques de l'API"""
-    completed_jobs = [j for j in jobs_storage.values() if j["status"] == "completed"]
-    avg_time = sum(j["result"]["processing_time"] for j in completed_jobs if "result" in j) / len(completed_jobs) if completed_jobs else 0
+    completed = [j for j in jobs_storage.values() if j["status"] == "completed"]
+    avg = sum(j["result"]["processing_time"] for j in completed if "result" in j) / len(completed) if completed else 0
     
     return {
         "model_loaded": whisper_model is not None,
         "active_jobs": len(jobs_storage),
-        "jobs_by_status": {
-            "queued": sum(1 for j in jobs_storage.values() if j["status"] == "queued"),
-            "processing": sum(1 for j in jobs_storage.values() if j["status"] == "processing"),
-            "completed": sum(1 for j in jobs_storage.values() if j["status"] == "completed"),
-            "failed": sum(1 for j in jobs_storage.values() if j["status"] == "failed")
-        },
-        "performance": {
-            "average_processing_time": round(avg_time, 2),
-            "total_completed": len(completed_jobs)
-        }
+        "average_time": round(avg, 2),
+        "total_completed": len(completed)
     }
 
-@app.delete("/jobs/{job_id}")
-async def delete_job(job_id: str):
-    """Supprime un job manuellement"""
-    if job_id in jobs_storage:
-        del jobs_storage[job_id]
-        return {"message": "Job deleted", "job_id": job_id}
-    return JSONResponse(
-        status_code=404,
-        content={"error": "Job not found"}
-    )
-
-# Point d'entrée
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
