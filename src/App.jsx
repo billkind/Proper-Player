@@ -2,10 +2,7 @@ import React, { useState } from 'react';
 import './App.css';
 import VideoPreview from './VideoPreview';
 
-// Configuration de l'API - Changez cette URL après le déploiement
-//const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-// Au début du fichier, après les imports
-const API_URL = 'https://proper-player.onrender.com'; // Votre URL Render
+const API_URL = import.meta.env.VITE_API_URL || 'https://proper-player.onrender.com';
 
 function App() {
   const [file, setFile] = useState(null);
@@ -15,13 +12,51 @@ function App() {
   const [mode, setMode] = useState("mute");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState(null);
+  const [jobId, setJobId] = useState(null);
 
   const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
+    const selectedFile = e.target.files[0];
+    
+    // Afficher la taille
+    if (selectedFile) {
+      const sizeMB = (selectedFile.size / (1024 * 1024)).toFixed(2);
+      console.log(`File selected: ${selectedFile.name} (${sizeMB} MB)`);
+    }
+    
+    setFile(selectedFile);
     setResult(null);
     setLogs('');
     setProgress(0);
     setError(null);
+    setJobId(null);
+  };
+
+  const pollJobStatus = async (jobId) => {
+    try {
+      const response = await fetch(`${API_URL}/status/${jobId}`);
+      const data = await response.json();
+      
+      console.log('Job status:', data);
+      
+      setProgress(data.progress || 0);
+      setLogs(data.message || '');
+      
+      if (data.status === 'completed') {
+        setResult(data.result);
+        setIsAnalyzing(false);
+        setLogs('✅ Analysis complete!');
+        return true; // Stop polling
+      } else if (data.status === 'failed') {
+        setError(data.error || 'Analysis failed');
+        setIsAnalyzing(false);
+        return true; // Stop polling
+      }
+      
+      return false; // Continue polling
+    } catch (err) {
+      console.error('Polling error:', err);
+      return false; // Continue polling
+    }
   };
 
   const handleUpload = async () => {
@@ -29,46 +64,62 @@ function App() {
     
     setIsAnalyzing(true);
     setError(null);
+    setResult(null);
     const formData = new FormData();
     formData.append('file', file);
-    setLogs('⏳ Upload in progress...');
-    setProgress(10);
+    setLogs('⏳ Uploading file...');
+    setProgress(5);
 
     try {
-      setProgress(30);
-      setLogs('🔊 Analyzing audio...');
+      console.log('📤 Uploading to:', `${API_URL}/analyze`);
       
+      // Étape 1: Upload et démarrage du job
       const response = await fetch(`${API_URL}/analyze`, {
         method: 'POST',
         body: formData,
       });
       
       if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+        const errorText = await response.text();
+        throw new Error(`Server error: ${response.status} - ${errorText}`);
       }
       
       const data = await response.json();
+      console.log('✅ Job created:', data);
       
-      if (data.status === 'error') {
-        throw new Error(data.error);
-      }
+      const currentJobId = data.job_id;
+      setJobId(currentJobId);
+      setLogs('🔊 Analysis started...');
+      setProgress(10);
       
-      setResult(data);
-      setLogs('✅ Analysis complete!');
-      setProgress(100);
+      // Étape 2: Polling du statut toutes les 2 secondes
+      const pollInterval = setInterval(async () => {
+        const shouldStop = await pollJobStatus(currentJobId);
+        if (shouldStop) {
+          clearInterval(pollInterval);
+        }
+      }, 2000); // Poll toutes les 2 secondes
+      
+      // Timeout de sécurité (10 minutes)
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (isAnalyzing) {
+          setError('Analysis timeout. Please try with a shorter file.');
+          setIsAnalyzing(false);
+        }
+      }, 600000); // 10 minutes
+      
     } catch (err) {
       console.error('Error:', err);
       setError(err.message);
       setLogs('❌ Error: ' + err.message);
       setProgress(0);
-    } finally {
       setIsAnalyzing(false);
     }
   };
 
   return (
     <div className="app-container">
-      {/* Header */}
       <header className="header">
         <div className="header-content">
           <img src="/Headphones with Prohibition Icon.png" alt="" className="img1" width={50}/>
@@ -76,19 +127,34 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="main-content">
-        {/* Hero Section */}
         <div className="hero-section">
           <h1 className="hero-title">
             ♫PLAY<br />SAFELY
           </h1>
           <p className="hero-subtitle">
             Enjoy an environment where listening becomes your ally. Play without offensive language.
+            <br />
+            <span style={{
+              fontSize: '0.875rem',
+              color: '#10b981',
+              marginTop: '1rem',
+              display: 'block',
+              fontWeight: '500'
+            }}>
+              ✅ Supports large files up to 100MB
+            </span>
+            <span style={{
+              fontSize: '0.8rem',
+              color: 'rgba(255,255,255,0.5)',
+              display: 'block',
+              marginTop: '0.5rem'
+            }}>
+              Processing time: ~30-60 seconds per minute of audio
+            </span>
           </p>
         </div>
 
-        {/* Upload Section */}
         <div className="upload-card">
           <div>
             <input
@@ -110,11 +176,13 @@ function App() {
               <div className="file-selected">
                 <p>Selected file:</p>
                 <p className="file-name">{file.name}</p>
+                <p style={{fontSize: '0.8rem', color: 'rgba(255,255,255,0.6)', marginTop: '0.25rem'}}>
+                  Size: {(file.size / (1024 * 1024)).toFixed(2)} MB
+                </p>
               </div>
             )}
           </div>
 
-          {/* Mode Selection */}
           <div className="mode-selection">
             <label className="mode-label">Censorship Mode</label>
             <div className="mode-options">
@@ -183,7 +251,7 @@ function App() {
           {progress > 0 && !error && (
             <div className="progress-container">
               <div className="progress-info">
-                <span>Processing...</span>
+                <span>{logs}</span>
                 <span>{progress}%</span>
               </div>
               <div className="progress-bar-container">
@@ -193,7 +261,6 @@ function App() {
           )}
         </div>
 
-        {/* Video Player */}
         {result && file && (
           <div className="video-container">
             <VideoPreview
