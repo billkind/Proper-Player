@@ -1,29 +1,60 @@
+/* Correction 1 : body et html */
 body, html {
   margin: 0;
   padding: 0;
   width: 100%;
+  max-width: 100vw; /* Empêche le dépassement horizontal */
+  overflow-x: hidden; /* Cache le scroll horizontal */
   font-family: 'Inter', 'Segoe UI', sans-serif;
   background: linear-gradient(135deg, #000000 0%, #2a2a2a 50%, #494949 100%);
   min-height: 100vh;
   color: white;
 }
 
+/* Correction 2 : app-container */
 .app-container {
   min-height: 100vh;
   padding: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
+/* Correction 3 : header */
 .header {
   width: 100%;
+  max-width: 100vw;
+  box-sizing: border-box;
   background: rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   padding: 1rem 2rem;
 }
 
+/* Correction 4 : main-content */
+.main-content {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  box-sizing: border-box;
+}
+
+/* Correction 5 : Tous les conteneurs */
+* {
+  box-sizing: border-box;
+}
+
+/* Reste du CSS inchangé... */
 .header-content {
   max-width: 1200px;
   margin: 0 auto;
@@ -45,18 +76,6 @@ body, html {
   font-weight: 600;
   color: #e6e6e6;
   margin: 0;
-}
-
-.main-content {
-  max-width: 1200px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  flex: 1;
 }
 
 .hero-section {
