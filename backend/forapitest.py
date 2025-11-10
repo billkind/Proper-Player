@@ -106,19 +106,45 @@ def process_audio(job_id: str, file_path: str, filename: str):
         jobs_storage[job_id]["message"] = "Detecting offensive words..."
         
         toxic_words = []
-        for segment in segments:
-            for word_data in segment.words:
-                word = word_data.word.strip()
-                start = round(word_data.start, 2)
-                end = round(word_data.end, 2)
+        processed_segments = 0
+        total_segments = 0
+        
+        # Compter les segments d'abord
+        segments_list = list(segments)
+        total_segments = len(segments_list)
+        
+        for idx, segment in enumerate(segments_list):
+            # Mise à jour du progrès tous les 10 segments
+            if idx % 10 == 0 and total_segments > 0:
+                progress = 70 + int((idx / total_segments) * 25)
+                jobs_storage[job_id]["progress"] = min(progress, 95)
+            
+            if not hasattr(segment, 'words') or not segment.words:
+                continue
                 
-                norm_word = normalize(word)
-                if norm_word in offensive_lexicon:
-                    toxic_words.append({
-                        "word": word,
-                        "start": start,
-                        "end": end
-                    })
+            for word_data in segment.words:
+                try:
+                    word = word_data.word.strip()
+                    if not word:
+                        continue
+                        
+                    start = round(word_data.start, 2)
+                    end = round(word_data.end, 2)
+                    
+                    # Normalisation plus rapide
+                    norm_word = word.lower().strip(".,!?()[]{};:\"'")
+                    
+                    # Vérification directe sans lemmatization pour être plus rapide
+                    if norm_word in offensive_lexicon:
+                        toxic_words.append({
+                            "word": word,
+                            "start": start,
+                            "end": end
+                        })
+                except Exception as e:
+                    # Ignorer les erreurs sur des mots individuels
+                    print(f"Error processing word: {e}")
+                    continue
         
         # Terminé
         jobs_storage[job_id]["status"] = "completed"
