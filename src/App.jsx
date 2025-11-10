@@ -142,7 +142,7 @@ function App() {
               display: 'block',
               fontWeight: '500'
             }}>
-              ✅ Supports large files up to 100MB
+              Supports large files up to 100MB
             </span>
             <span style={{
               fontSize: '0.8rem',
@@ -150,7 +150,7 @@ function App() {
               display: 'block',
               marginTop: '0.5rem'
             }}>
-              
+              High-speed processing
             </span>
           </p>
         </div>
