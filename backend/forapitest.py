@@ -287,6 +287,7 @@ def cleanup_old_jobs():
         print(f"🧹 Cleaned up {len(to_delete)} old jobs")
 
 # === Endpoints ===
+# === MODIFICATION 1 : Dans l'endpoint "/" (ligne ~319) ===
 @app.get("/")
 async def root():
     return {
@@ -299,19 +300,11 @@ async def root():
             "Ultra-fast transcription (10-30s for any length)",
             "No timeout issues",
             "Professional accuracy",
-            "Supports files up to 200MB"
+            "Supports files up to 500MB"  # ← CHANGÉ DE 200MB À 500MB
         ]
     }
 
-@app.get("/health")
-@app.head("/health")
-async def health():
-    return {
-        "status": "healthy",
-        "service": "Proper-Player",
-        "api_configured": bool(ASSEMBLYAI_API_KEY)
-    }
-
+# === MODIFICATION 2 : Dans l'endpoint "/analyze" (ligne ~342) ===
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     """Analyse un fichier audio pour détecter les mots offensants"""
@@ -328,8 +321,8 @@ async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTask
             }
         )
     
-    # Limite de taille (200 MB)
-    MAX_SIZE = 200 * 1024 * 1024
+    # Limite de taille (500 MB) - CHANGÉ DE 200 À 500
+    MAX_SIZE = 500 * 1024 * 1024  # ← MODIFIÉ ICI
     
     try:
         # Lire le fichier
@@ -339,10 +332,12 @@ async def analyze(file: UploadFile = File(...), background_tasks: BackgroundTask
             return JSONResponse(
                 status_code=413,
                 content={
-                    "error": "File too large. Maximum 200MB allowed.",
+                    "error": "File too large. Maximum 500MB allowed.",  # ← MODIFIÉ ICI
                     "status": "error"
                 }
             )
+        
+        # ... reste du code inchangé ...
         
         if len(contents) == 0:
             return JSONResponse(
@@ -470,3 +465,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
