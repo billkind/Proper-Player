@@ -93,7 +93,7 @@ def get_whisper_model():
         print("Loading Faster-Whisper model on first use...")
         # Options optimisées pour vitesse maximale
         whisper_model = WhisperModel(
-            "tiny",  # Le plus rapide
+            "tiny.en",  # Le plus rapide
             device="cpu",
             compute_type="int8",
             num_workers=1,  # Évite les conflits
